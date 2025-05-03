@@ -1,0 +1,332 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                         String    @id @default(cuid())
+  name                       String?
+  email                      String?   @unique
+  emailVerified              DateTime?
+  image                      String?
+  discordId                  String?   @unique
+  discordUsername            String?
+  role                       Role      @default(USER)
+  
+  // Subscription fields
+  activeBotQuota             Int       @default(0)  // Total number of bots the user has paid for
+  activeBotsCount            Int       @default(0)  // Current number of active bots
+  stripeCustomerId           String?
+  stripeSubscriptionId       String?
+  stripeSubscriptionStatus   SubscriptionStatus? 
+  stripeSubscriptionPriceId  String?
+  currentSubscriptionPeriodStart DateTime?
+  currentSubscriptionPeriodEnd   DateTime?
+  
+  // User status fields
+  isBanned                   Boolean   @default(false)
+  banReason                  String?
+  bannedAt                   DateTime?
+  lastLoginAt                DateTime?
+  lastLoginIp                String?
+  
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+  
+  accounts                   Account[]
+  sessions                   Session[]
+  bots                       Bot[]
+  auditLogs                  AuditLog[]
+  notifications              Notification[]
+  payments                   Payment[]
+  subscriptionChanges        SubscriptionChange[]
+
+  @@index([discordId])
+  @@index([role])
+  @@index([isBanned])
+  @@index([stripeCustomerId])
+  @@index([stripeSubscriptionStatus])
+}
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?  @db.Text
+  access_token       String?  @db.Text
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?  @db.Text
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Bot {
+  id                    String    @id @default(cuid())
+  userId                String
+  name                  String
+  type                  BotType
+  status                BotStatus @default(OFFLINE_INACTIVE)
+  isActive              Boolean   @default(false)
+  discordBotToken       String    // Encrypted
+  updateIntervalSeconds Int       @default(60)
+  decimalPlaces         Int       @default(4)
+  config                Json
+  paidUpTillEpoch       Int?
+  lastRunEpoch          Int?
+  lastErrorMessage      String?
+  
+  // Payment tracking
+  isIncludedInSubscription Boolean @default(false)  // Whether this bot is part of the paid subscription
+  activationDate        DateTime?  // When the bot was last activated
+  deactivationDate      DateTime?  // When the bot was last deactivated
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  botActivities         BotActivity[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([isActive])
+  @@index([type])
+  @@index([isIncludedInSubscription])
+}
+
+model BotActivity {
+  id           String    @id @default(cuid())
+  botId        String
+  activityType ActivityType
+  details      Json?
+  timestamp    DateTime  @default(now())
+  
+  bot          Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId])
+  @@index([timestamp])
+}
+
+model AuditLog {
+  id           String    @id @default(cuid())
+  userId       String
+  action       String
+  resourceType ResourceType
+  resourceId   String?
+  details      String?   @db.Text
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime  @default(now())
+  
+  // New fields for better audit logging
+  success      Boolean   @default(true)
+  errorMessage String?
+  metadata     Json?
+  
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([resourceType])
+  @@index([createdAt])
+}
+
+model SystemConfig {
+  id          String    @id @default(cuid())
+  key         String    @unique
+  value       String    @db.Text
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // New field for config management
+  isEncrypted Boolean   @default(false)
+
+  @@index([key])
+}
+
+model ChainConfig {
+  id          String    @id @default(cuid())
+  name        String
+  rpcUrl      String
+  explorerUrl String
+  currencySymbol String
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // New fields for better chain management
+  chainId     String?   @unique
+  logoUrl     String?
+  blockTime   Int?      // Average block time in seconds
+  
+  @@index([isActive])
+}
+
+model Payment {
+  id                String    @id @default(cuid())
+  userId            String
+  amount            Float
+  currency          String    @default("usd")
+  status            PaymentStatus
+  stripePaymentId   String?
+  stripeInvoiceId   String?
+  paymentMethod     String?
+  description       String?
+  metadata          Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model SubscriptionChange {
+  id                String    @id @default(cuid())
+  userId            String
+  changeType        SubscriptionChangeType
+  previousQuota     Int
+  newQuota          Int
+  reason            String?
+  additionalCost    Float?
+  prorationDetails  Json?
+  effectiveDate     DateTime
+  createdAt         DateTime  @default(now())
+  
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([changeType])
+  @@index([effectiveDate])
+}
+
+model Notification {
+  id          String    @id @default(cuid())
+  userId      String
+  title       String
+  message     String
+  type        NotificationType
+  isRead      Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum BotType {
+  PRICE
+  MARKETCAP
+  TREASURY
+  HOLDERS
+  SUPPLY
+  BURN
+  LIQUIDITY
+  WHALE
+  CUSTOM
+}
+
+enum BotStatus {
+  OFFLINE_INACTIVE
+  ACTIVATING
+  RUNNING
+  DEACTIVATING
+  ERROR
+}
+
+enum ResourceType {
+  USER
+  BOT
+  SYSTEM_CONFIG
+  BILLING
+  CHAIN_CONFIG
+  SUBSCRIPTION
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  TRIALING
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+}
+
+enum SubscriptionPlan {
+  FREE
+  BASIC
+  PRO
+  ENTERPRISE
+}
+
+enum ActivityType {
+  STARTED
+  STOPPED
+  ERROR
+  DATA_UPDATED
+  CONFIG_CHANGED
+}
+
+enum NotificationType {
+  INFO
+  WARNING
+  ERROR
+  SUCCESS
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum SubscriptionChangeType {
+  INCREASE
+  DECREASE
+  INITIAL_SUBSCRIPTION
+  CANCELLATION
+  RENEWAL
+}
